@@ -53,7 +53,8 @@ pip install -r requirements.txt
 ### Optional: CUDA (GPU acceleration support)
 If you want to use CUDA for faster processing, you can install the CUDA PyTorch library:
 ```bash
-pip install torch --index-url https://download.pytorch.org/whl/cu121
+pip uninstall torch -y
+pip install torch --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ## 4. Run fumoSpeak
