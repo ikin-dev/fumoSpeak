@@ -376,16 +376,21 @@ class VoiceApp:
         if self.running:
             return
 
-        try:
-            self.stop_audio_event.clear()
-            self.persist_settings()
+        self.start_btn.config(state="disabled")
+        self.stop_audio_event.clear()
+        self.persist_settings()
 
+        # download model
+        threading.Thread(target=self._start_async, daemon=True).start()
+
+    def _start_async(self):
+        try:
             model_name = MODEL_MAP.get(self.model_var.get(), "tiny.en")
             device_ui = self.device_var.get()
             device = "cuda" if device_ui == "CUDA (GPU)" else "cpu"
             compute = "float16" if device == "cuda" else "int8"
 
-            self.log(f"Loading model: {model_name}")
+            self.log(f"Loading model: {model_name}...")
 
             self.model = WhisperModel(
                 model_name,
@@ -402,14 +407,16 @@ class VoiceApp:
                 device=input_index,
                 callback=self.callback,
             )
-
             self.stream.start()
-            self.set_running_state(True)
+
+            self.running = True
+            self.root.after(0, lambda: self.set_running_state(True))
             threading.Thread(target=self.worker, daemon=True).start()
             self.log("Listening...")
 
         except Exception as e:
             self.log(f"Start failed: {e}")
+            self.root.after(0, lambda: self.start_btn.config(state="normal"))
 
     def stop(self):
         self.set_running_state(False)
