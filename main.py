@@ -390,7 +390,7 @@ class VoiceApp:
             device = "cuda" if device_ui == "CUDA (GPU)" else "cpu"
             compute = "float16" if device == "cuda" else "int8"
 
-            self.log(f"Loading model: {model_name}...")
+            self.log(f"Loading {model_name} ({device.upper()})..." )
 
             self.model = WhisperModel(
                 model_name,
@@ -412,6 +412,7 @@ class VoiceApp:
             self.running = True
             self.root.after(0, lambda: self.set_running_state(True))
             threading.Thread(target=self.worker, daemon=True).start()
+            self.log(f"✔ {model_name} ({device.upper()}) loaded.")
             self.log("Listening...")
 
         except Exception as e:
