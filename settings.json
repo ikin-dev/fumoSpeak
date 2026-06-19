@@ -1,0 +1,7 @@
+{
+  "model": "small.en (~488 MB)",
+  "device": "CPU",
+  "input": "0: Microsoft Sound Mapper - Input",
+  "output": "8: Microsoft Sound Mapper - Output",
+  "pitch": 1.25
+}

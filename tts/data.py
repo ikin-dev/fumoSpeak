@@ -1,0 +1,93 @@
+# converted from js
+
+alphabet = {
+    "a": "a_la.pcm",
+    "b": "bi_lb.pcm",
+    "c": "shi_lcz.pcm",
+    "d": "ji_ldg.pcm",
+    "e": "i_lev.pcm",
+    "f": "lf.pcm",
+    "g": "ji_ldg.pcm",
+    "h": "lh.pcm",
+    "i": "li.pcm",
+    "j": "lj.pcm",
+    "k": "lk.pcm",
+    "l": "ll.pcm",
+    "m": "lmn.pcm",
+    "n": "lmn.pcm",
+    "o": "o_wo_lo.pcm",
+    "p": "pi_lp.pcm",
+    "q": "lq.pcm",
+    "r": "lr.pcm",
+    "s": "lsx.pcm",
+    "t": "lt.pcm",
+    "u": "lu.pcm",
+    "v": "i_lev.pcm",
+    "w": "wa_lw.pcm",
+    "x": "lsx.pcm",
+    "y": "ly.pcm",
+    "z": "shi_lcz.pcm",
+}
+
+alphabetJP = {
+    "あ": "a_la.pcm",
+    "い": "i_lev.pcm",
+    "う": "u.pcm",
+    "え": "e_he.pcm",
+    "お": "o_wo_lo.pcm",
+    "か": "ka.pcm",
+    "き": "ki.pcm",
+    "く": "ku.pcm",
+    "け": "ke.pcm",
+    "こ": "ko.pcm",
+    "さ": "sa.pcm",
+    "し": "shi_lcz.pcm",
+    "す": "su.pcm",
+    "せ": "se.pcm",
+    "そ": "so.pcm",
+    "た": "ta.pcm",
+    "ち": "chi.pcm",
+    "つ": "tsu.pcm",
+    "て": "te.pcm",
+    "と": "to.pcm",
+    "な": "na.pcm",
+    "に": "ni.pcm",
+    "ぬ": "nu.pcm",
+    "ね": "ne.pcm",
+    "の": "no.pcm",
+    "は": "ha.pcm",
+    "ひ": "hi.pcm",
+    "ふ": "fu.pcm",
+    "へ": "e_he.pcm",
+    "ほ": "ho.pcm",
+    "ま": "ma.pcm",
+    "み": "mi.pcm",
+    "む": "mu.pcm",
+    "め": "me.pcm",
+    "も": "mo.pcm",
+    "や": "ya.pcm",
+    "ゆ": "yu.pcm",
+    "よ": "yo.pcm",
+    "ら": "ra.pcm",
+    "り": "ri.pcm",
+    "る": "ru.pcm",
+    "れ": "re.pcm",
+    "ろ": "ro.pcm",
+    "わ": "wa_lw.pcm",
+    "ん": "n.pcm",
+}
+
+small_to_large = {
+    "ぁ": "あ", "ぃ": "い", "ぅ": "う", "ぇ": "え", "ぉ": "お",
+    "ゃ": "や", "ゅ": "ゆ", "ょ": "よ", "ゎ": "わ",
+}
+
+silent = set(["?", "？", "!", "！", ".", "。", ",", "、", " ", "　", "っ"])
+exclaim = set(["!", "！"])
+repeat = set(["ー", "〜"])
+
+pitches = {
+    "Low": 1.1,
+    "Base": 1.25,
+    "High": 1.4,
+}
