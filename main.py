@@ -1,4 +1,5 @@
 import threading
+import time
 from queue import Queue
 import tkinter as tk
 from tkinter import ttk
@@ -11,6 +12,7 @@ import torch
 import numpy as np
 import sounddevice as sd
 from faster_whisper import WhisperModel
+from faster_whisper.vad import VadOptions, get_speech_timestamps
 from tts.engine import generate
 
 # settings
@@ -55,11 +57,17 @@ MODEL_MAP = {
     "distil-medium.en (~1.5 GB)": "distil-medium.en",
 }
 
-# config
+# audio capture config
 RATE = 16000
 BLOCKSIZE = 4000
-CHUNKS_PER_TRANSCRIBE = 3
 
+# speech segmentation (VAD) config
+MIN_SPEECH_DURATION = 1.0   # seconds - shortest utterance worth sending to Whisper
+MAX_SPEECH_DURATION = 8.0   # seconds - force a cut even if the person is still talking
+DROP_START_SILENCE = 0.25   # seconds - padding kept around detected speech
+PAUSE_DURATION = 1.0        # seconds of silence that marks "utterance is finished"
+VAD_THRESHOLD = 0.5         # Silero speech-probability threshold
+VAD_POLL_INTERVAL = 0.1     # seconds between buffer checks in the worker loop
 
 class VoiceApp:
     def __init__(self, root):
@@ -67,8 +75,13 @@ class VoiceApp:
         self.root.title("fumoSpeak")
         self.root.geometry("500x500")
         self.root.resizable(False, True)
-        self.root.iconphoto("assets/icon.ico", tk.PhotoImage(file="assets/icon.png"))
-        self.root.iconbitmap("assets/icon.ico") # not sure if needed
+
+        try: # this is still weird
+            self.root.iconphoto(False, tk.PhotoImage(file="assets/icon.png"))
+            self.root.iconbitmap("assets/icon.ico")
+        except Exception as e:
+            print(f"Icon load skipped: {e}")
+
         self.running = False
         self.model = None
         self.stream = None
@@ -86,8 +99,8 @@ class VoiceApp:
     # settings
     def load_saved_settings(self):
         pitch = self.settings.get("pitch", 1.25)
-        
-        self.model_var.set(self.settings.get("model", "small.en (~488 MB)"))
+
+        self.model_var.set(self.settings.get("model", "medium.en (~1.5 GB)"))
         self.device_var.set(self.settings.get("device", "CPU"))
         self.pitch_var.set(pitch)
         self.pitch_label.config(text=f"{pitch:.2f}x")
@@ -273,7 +286,7 @@ class VoiceApp:
             self.log(f"TTS error: {e}")
 
     # mic callback
-    def callback(self, indata, frames, time, status):
+    def callback(self, indata, frames, time_info, status):
         if status:
             self.log(str(status))
 
@@ -282,25 +295,71 @@ class VoiceApp:
 
     # transcription
     def worker(self):
+        # vad decides when the sentence is done and ready to send
+        vad_options = VadOptions(
+            threshold=VAD_THRESHOLD,
+            min_speech_duration_ms=int(MIN_SPEECH_DURATION * 1000),
+            max_speech_duration_s=MAX_SPEECH_DURATION,
+            min_silence_duration_ms=int(PAUSE_DURATION * 1000),
+            speech_pad_ms=int(DROP_START_SILENCE * 1000),
+        )
+
+        pending = np.zeros((0,), dtype=np.float32)
+
         while self.running:
+            time.sleep(VAD_POLL_INTERVAL)
 
             with self.buffer_lock:
-                if len(self.buffer) < CHUNKS_PER_TRANSCRIBE:
-                    continue
+                if self.buffer:
+                    new_audio = np.concatenate(self.buffer).flatten()
+                    self.buffer.clear()
+                else:
+                    new_audio = None
 
-                chunks = self.buffer[:CHUNKS_PER_TRANSCRIBE]
-                del self.buffer[:CHUNKS_PER_TRANSCRIBE]
+            if new_audio is not None and new_audio.size:
+                pending = np.concatenate([pending, new_audio])
 
-            audio = np.concatenate(chunks).flatten()
+            if pending.size == 0:
+                continue
+
+            duration = pending.size / RATE
+
+            try:
+                speech_segments = get_speech_timestamps(pending, vad_options, sampling_rate=RATE)
+            except Exception as e:
+                self.log(f"VAD error: {e}")
+                continue
+
+            if not speech_segments:
+                # Nothing but silence so far - don't let this grow forever.
+                if duration >= MAX_SPEECH_DURATION:
+                    pending = np.zeros((0,), dtype=np.float32)
+                continue
+
+            last_seg = speech_segments[-1]
+            trailing_silence = duration - (last_seg["end"] / RATE)
+            utterance_done = trailing_silence >= PAUSE_DURATION
+            hit_max_duration = duration >= MAX_SPEECH_DURATION
+
+            if not (utterance_done or hit_max_duration):
+                continue  # still mid-utterance, keep listening
+
+            cut_sample = last_seg["end"] if utterance_done else int(MAX_SPEECH_DURATION * RATE)
+            first_sample = min(speech_segments[0]["start"], cut_sample)
+
+            utterance = pending[first_sample:cut_sample]
+            pending = pending[cut_sample:]
+
+            if utterance.size / RATE < MIN_SPEECH_DURATION:
+                continue  # too short to be worth sending to Whisper
 
             try:
                 segments, _ = self.model.transcribe(
-                    audio,
+                    utterance,
                     language="en",
                     beam_size=1,
                     best_of=1,
                     temperature=0.0,
-                    vad_filter=True,
                 )
 
                 text = " ".join(s.text.strip() for s in segments).strip()
@@ -311,8 +370,6 @@ class VoiceApp:
 
             except Exception as e:
                 self.log(f"Transcription error: {e}")
-
-            sd.sleep(20)
 
     # start and stop session
     def start(self):
