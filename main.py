@@ -15,8 +15,8 @@ from faster_whisper import WhisperModel
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 from tts.engine import generate
 
-# settings
 SETTINGS_FILE = "settings.json"
+LATEST_LINE_FILE = "temp_out.txt"
 
 
 def load_settings():
@@ -62,12 +62,13 @@ RATE = 16000
 BLOCKSIZE = 4000
 
 # speech segmentation (VAD) config
-MIN_SPEECH_DURATION = 1.0   # seconds - shortest utterance worth sending to Whisper
-MAX_SPEECH_DURATION = 8.0   # seconds - force a cut even if the person is still talking
-DROP_START_SILENCE = 0.25   # seconds - padding kept around detected speech
-PAUSE_DURATION = 1.0        # seconds of silence that marks "utterance is finished"
-VAD_THRESHOLD = 0.5         # Silero speech-probability threshold
-VAD_POLL_INTERVAL = 0.1     # seconds between buffer checks in the worker loop
+MIN_SPEECH_DURATION = 1.0  # seconds - shortest utterance worth sending to Whisper
+MAX_SPEECH_DURATION = 8.0  # seconds - force a cut even if the person is still talking
+DROP_START_SILENCE = 0.25  # seconds - padding kept around detected speech
+PAUSE_DURATION = 1.0  # seconds of silence that marks "utterance is finished"
+VAD_THRESHOLD = 0.5  # Silero speech-probability threshold
+VAD_POLL_INTERVAL = 0.1  # seconds between buffer checks in the worker loop
+
 
 class VoiceApp:
     def __init__(self, root):
@@ -76,7 +77,7 @@ class VoiceApp:
         self.root.geometry("500x500")
         self.root.resizable(False, True)
 
-        try: # this is still weird
+        try:  # this is still weird
             self.root.iconphoto(False, tk.PhotoImage(file="assets/icon.png"))
             self.root.iconbitmap("assets/icon.ico")
         except Exception as e:
@@ -104,6 +105,7 @@ class VoiceApp:
         self.device_var.set(self.settings.get("device", "CPU"))
         self.pitch_var.set(pitch)
         self.pitch_label.config(text=f"{pitch:.2f}x")
+        self.save_latest_var.set(self.settings.get("save_latest", False))
 
     def persist_settings(self):
         save_settings(
@@ -113,6 +115,7 @@ class VoiceApp:
                 "input": self.input_var.get(),
                 "output": self.output_var.get(),
                 "pitch": float(self.pitch_var.get()),
+                "save_latest": bool(self.save_latest_var.get()),
             }
         )
 
@@ -122,6 +125,11 @@ class VoiceApp:
             self.stop()
         self.stop_audio()
         self.persist_settings()
+
+    def on_save_toggle_change(self):
+        self.persist_settings()
+        state = "enabled" if self.save_latest_var.get() else "disabled"
+        self.log(f"Save latest line to file ({LATEST_LINE_FILE}): {state}")
 
     def set_running_state(self, running: bool):
         self.running = running
@@ -139,6 +147,14 @@ class VoiceApp:
         self.log_box.insert(tk.END, text + "\n")
         self.log_box.see(tk.END)
 
+    # write the most recent spoken line to disk, overwriting any previous content
+    def write_latest_line(self, text):
+        try:
+            with open(LATEST_LINE_FILE, "w", encoding="utf-8") as f:
+                f.write(text + "\n")
+        except Exception as e:
+            self.log(f"Latest-line file error: {e}")
+
     # check for depencencies, ffmpeg and cuda
     def startup_check(self):
         self.log("=== System Check ===")
@@ -153,101 +169,135 @@ class VoiceApp:
         for k, v in checks.items():
             self.log(f"{'✔' if v else '✖'} {k}")
 
-        self.log(f"{'✔ ffmpeg' if shutil.which('ffmpeg') else '✖ ffmpeg: Not installed'}")
+        self.log(
+            f"{'✔ ffmpeg' if shutil.which('ffmpeg') else '✖ ffmpeg: Not installed'}"
+        )
         cuda = cuda_info()
-        self.log(f"{'✔ CUDA: ' + str(cuda['name']) if cuda['available'] else '✖ CUDA: Not available'}")
+        self.log(
+            f"{'✔ CUDA: ' + str(cuda['name']) if cuda['available'] else '✖ CUDA: Not available'}"
+        )
         self.log("====================")
 
     # ui
     def build_ui(self):
-            top = ttk.Frame(self.root)
-            top.pack(fill="x", padx=10, pady=10)
-            
-            for i in range(5):
-                top.columnconfigure(i, weight=1)
+        top = ttk.Frame(self.root)
+        top.pack(fill="x", padx=10, pady=10)
 
-            # model select
-            ttk.Label(top, text="Model").grid(row=0, column=0, sticky="w", padx=(0, 6), pady=6)
-            self.model_var = tk.StringVar()
-            self.model_combo = ttk.Combobox(
-                top, textvariable=self.model_var, values=list(MODEL_MAP.keys()), width=25
-            )
-            self.model_combo.grid(row=0, column=1, padx=6, pady=6, sticky="ew")
+        for i in range(5):
+            top.columnconfigure(i, weight=1)
 
-            # cpu and gpu select
-            ttk.Label(top, text="Device").grid(row=0, column=2, sticky="w", padx=(10, 6), pady=6)
-            self.device_var = tk.StringVar(value="CPU")
-            self.device_combo = ttk.Combobox(
-                top, textvariable=self.device_var, values=["CPU", "CUDA (GPU)"], width=15
-            )
-            self.device_combo.grid(row=0, column=3, padx=6, pady=6, sticky="ew")
+        # model select
+        ttk.Label(top, text="Model").grid(
+            row=0, column=0, sticky="w", padx=(0, 6), pady=6
+        )
+        self.model_var = tk.StringVar()
+        self.model_combo = ttk.Combobox(
+            top, textvariable=self.model_var, values=list(MODEL_MAP.keys()), width=25
+        )
+        self.model_combo.grid(row=0, column=1, padx=6, pady=6, sticky="ew")
 
-            # input and output devices
-            devices = sd.query_devices()
+        # cpu and gpu select
+        ttk.Label(top, text="Device").grid(
+            row=0, column=2, sticky="w", padx=(10, 6), pady=6
+        )
+        self.device_var = tk.StringVar(value="CPU")
+        self.device_combo = ttk.Combobox(
+            top, textvariable=self.device_var, values=["CPU", "CUDA (GPU)"], width=15
+        )
+        self.device_combo.grid(row=0, column=3, padx=6, pady=6, sticky="ew")
 
-            input_devices = [
-                f"{i}: {d['name']}"
-                for i, d in enumerate(devices)
-                if d["max_input_channels"] > 0
-            ]
+        # input and output devices
+        devices = sd.query_devices()
 
-            output_devices = [
-                f"{i}: {d['name']}"
-                for i, d in enumerate(devices)
-                if d["max_output_channels"] > 0
-            ]
+        input_devices = [
+            f"{i}: {d['name']}"
+            for i, d in enumerate(devices)
+            if d["max_input_channels"] > 0
+        ]
 
-            self.input_var = tk.StringVar()
-            self.output_var = tk.StringVar()
+        output_devices = [
+            f"{i}: {d['name']}"
+            for i, d in enumerate(devices)
+            if d["max_output_channels"] > 0
+        ]
 
-            ttk.Label(top, text="Input").grid(row=1, column=0, sticky="w", padx=(0, 6), pady=4)
-            self.input_combo = ttk.Combobox(top, textvariable=self.input_var, values=input_devices)
-            self.input_combo.grid(row=1, column=1, columnspan=4, sticky="ew", padx=6, pady=4)
+        self.input_var = tk.StringVar()
+        self.output_var = tk.StringVar()
 
-            ttk.Label(top, text="Output").grid(row=2, column=0, sticky="w", padx=(0, 6), pady=4)
-            self.output_combo = ttk.Combobox(top, textvariable=self.output_var, values=output_devices)
-            self.output_combo.grid(row=2, column=1, columnspan=4, sticky="ew", padx=6, pady=4)
+        ttk.Label(top, text="Input").grid(
+            row=1, column=0, sticky="w", padx=(0, 6), pady=4
+        )
+        self.input_combo = ttk.Combobox(
+            top, textvariable=self.input_var, values=input_devices
+        )
+        self.input_combo.grid(
+            row=1, column=1, columnspan=4, sticky="ew", padx=6, pady=4
+        )
 
-            if input_devices:
-                self.input_combo.current(0)
-            if output_devices:
-                self.output_combo.current(0)
+        ttk.Label(top, text="Output").grid(
+            row=2, column=0, sticky="w", padx=(0, 6), pady=4
+        )
+        self.output_combo = ttk.Combobox(
+            top, textvariable=self.output_var, values=output_devices
+        )
+        self.output_combo.grid(
+            row=2, column=1, columnspan=4, sticky="ew", padx=6, pady=4
+        )
 
-            # pitch slider
-            self.pitch_var = tk.DoubleVar(value=1.25)
-            ttk.Label(top, text="Pitch").grid(row=3, column=0, sticky="w", padx=(0, 6), pady=6)
-            self.pitch_slider = ttk.Scale(
-                top,
-                from_=0.5,
-                to=3.0,
-                variable=self.pitch_var,
-                orient="horizontal"
-            )
-            self.pitch_slider.grid(row=3, column=1, columnspan=3, sticky="ew", padx=6, pady=6)
-            self.pitch_label = ttk.Label(top, text="1.25x")
-            self.pitch_label.grid(row=3, column=4, padx=(6, 0))
+        if input_devices:
+            self.input_combo.current(0)
+        if output_devices:
+            self.output_combo.current(0)
 
-            def update_pitch_label(*_):
-                v = round(self.pitch_var.get() / 0.05) * 0.05
-                v = max(0.5, min(3.0, v))
-                self.pitch_var.set(v)
-                self.pitch_label.config(text=f"{v:.2f}x")
+        # pitch slider
+        self.pitch_var = tk.DoubleVar(value=1.25)
+        ttk.Label(top, text="Pitch").grid(
+            row=3, column=0, sticky="w", padx=(0, 6), pady=6
+        )
+        self.pitch_slider = ttk.Scale(
+            top, from_=0.5, to=3.0, variable=self.pitch_var, orient="horizontal"
+        )
+        self.pitch_slider.grid(
+            row=3, column=1, columnspan=3, sticky="ew", padx=6, pady=6
+        )
+        self.pitch_label = ttk.Label(top, text="1.25x")
+        self.pitch_label.grid(row=3, column=4, padx=(6, 0))
 
-            self.pitch_slider.config(command=update_pitch_label)
+        def update_pitch_label(*_):
+            v = round(self.pitch_var.get() / 0.05) * 0.05
+            v = max(0.5, min(3.0, v))
+            self.pitch_var.set(v)
+            self.pitch_label.config(text=f"{v:.2f}x")
 
-            # start and stop buttons
-            btns = ttk.Frame(self.root)
-            btns.pack(fill="x", padx=10, pady=5)
+        self.pitch_slider.config(command=update_pitch_label)
 
-            self.start_btn = ttk.Button(btns, text="Start", command=self.start)
-            self.stop_btn = ttk.Button(btns, text="Stop", command=self.stop, state="disabled")
-            self.start_btn.pack(side="left", padx=6, pady=4)
-            self.stop_btn.pack(side="left", padx=6, pady=4)
+        # save-latest-line toggle
+        self.save_latest_var = tk.BooleanVar(value=False)
+        self.save_latest_check = ttk.Checkbutton(
+            top,
+            text="Save latest line to file",
+            variable=self.save_latest_var,
+            command=self.on_save_toggle_change,
+        )
+        self.save_latest_check.grid(
+            row=4, column=0, columnspan=5, sticky="w", padx=(0, 6), pady=6
+        )
 
-            # logs
-            self.log_box = ScrolledText(self.root, height=20)
-            self.log_box.pack(fill="both", expand=True, padx=10, pady=10)
-        
+        # start and stop buttons
+        btns = ttk.Frame(self.root)
+        btns.pack(fill="x", padx=10, pady=5)
+
+        self.start_btn = ttk.Button(btns, text="Start", command=self.start)
+        self.stop_btn = ttk.Button(
+            btns, text="Stop", command=self.stop, state="disabled"
+        )
+        self.start_btn.pack(side="left", padx=6, pady=4)
+        self.stop_btn.pack(side="left", padx=6, pady=4)
+
+        # logs
+        self.log_box = ScrolledText(self.root, height=20)
+        self.log_box.pack(fill="both", expand=True, padx=10, pady=10)
+
     # audio
     def playback_worker(self):
         while True:
@@ -325,7 +375,9 @@ class VoiceApp:
             duration = pending.size / RATE
 
             try:
-                speech_segments = get_speech_timestamps(pending, vad_options, sampling_rate=RATE)
+                speech_segments = get_speech_timestamps(
+                    pending, vad_options, sampling_rate=RATE
+                )
             except Exception as e:
                 self.log(f"VAD error: {e}")
                 continue
@@ -344,7 +396,9 @@ class VoiceApp:
             if not (utterance_done or hit_max_duration):
                 continue  # still mid-utterance, keep listening
 
-            cut_sample = last_seg["end"] if utterance_done else int(MAX_SPEECH_DURATION * RATE)
+            cut_sample = (
+                last_seg["end"] if utterance_done else int(MAX_SPEECH_DURATION * RATE)
+            )
             first_sample = min(speech_segments[0]["start"], cut_sample)
 
             utterance = pending[first_sample:cut_sample]
@@ -368,6 +422,9 @@ class VoiceApp:
                     self.log("> " + text)
                     self.speak(text)
 
+                    if self.save_latest_var.get():
+                        self.write_latest_line(text)
+
             except Exception as e:
                 self.log(f"Transcription error: {e}")
 
@@ -390,7 +447,7 @@ class VoiceApp:
             device = "cuda" if device_ui == "CUDA (GPU)" else "cpu"
             compute = "float16" if device == "cuda" else "int8"
 
-            self.log(f"Loading {model_name} ({device.upper()})..." )
+            self.log(f"Loading {model_name} ({device.upper()})...")
 
             self.model = WhisperModel(
                 model_name,

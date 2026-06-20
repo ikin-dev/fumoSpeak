@@ -1,5 +1,6 @@
-# settings
+# files
 settings.json
+temp_out.txt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
